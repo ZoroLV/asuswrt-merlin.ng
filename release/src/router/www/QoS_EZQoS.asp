@@ -483,6 +483,7 @@ function initial(){
 				document.getElementById('qos_mpu').style.display = "";
 				document.getElementById('qos_mpu_label').style.display = "";
 			}
+			update_cake_adv();
 		}
 		else{		// hide select option if qos disable
 			document.getElementById('settingSelection').style.display = "none";
@@ -1022,6 +1023,13 @@ function submitQoS(){
 		return;
 }
 
+function update_cake_adv(){
+	var show = (cake_support && document.form.qos_type.value == 9 && document.form.qos_enable.value == 1);
+	document.getElementById('cake_adv_tr').style.display = show ? "" : "none";
+	document.getElementById('cake_game_tr').style.display = show ? "" : "none";
+	document.getElementById('cake_dlhosts_tr').style.display = show ? "" : "none";
+}
+
 function change_qos_type(value){
 	/* MODELDEP */
 	if(value=="1" && (based_modelid == "RT-AC85U" || based_modelid == "RT-AC85P" || based_modelid == "RT-AC65U")){	//Force change to 0
@@ -1162,7 +1170,7 @@ function change_qos_type(value){
 			document.getElementById('qos_mpu').style.display = "";
 			document.getElementById('qos_mpu_label').style.display = "";
 		}
-		if(document.form.qos_type_orig.value == 0 && document.form.qos_enable_orig.value != 0){
+		if(document.form.qos_type_orig.value == 9 && document.form.qos_enable_orig.value != 0){
 			document.form.action_script.value = "restart_qos;restart_firewall";
 		}
 		else{
@@ -1183,6 +1191,7 @@ function change_qos_type(value){
 	}
  
 	document.form.qos_type.value = value;
+	update_cake_adv();
 
 	if(value != 2){
 		var alert_hint = "";
@@ -2135,6 +2144,49 @@ function set_overhead(entry) {
 												</select>
 
 
+											</td>
+										</tr>
+										<tr id="cake_adv_tr" style="display:none">
+											<th>Cake priority / ACK filter</th>
+											<td colspan="2">
+												<label style="margin-right:5px;">Upload:</label>
+												<select name="qos_cake_ulprio" class="input_option">
+													<option <% nvram_match("qos_cake_ulprio","besteffort","selected"); %> value="besteffort">Best effort</option>
+													<option <% nvram_match("qos_cake_ulprio","diffserv3","selected"); %> value="diffserv3">3 tins (diffserv3)</option>
+													<option <% nvram_match("qos_cake_ulprio","diffserv4","selected"); %> value="diffserv4">4 tins (diffserv4)</option>
+													<option <% nvram_match("qos_cake_ulprio","diffserv8","selected"); %> value="diffserv8">8 tins (diffserv8)</option>
+												</select>
+												<label style="margin-left:15px;margin-right:5px;">Download:</label>
+												<select name="qos_cake_dlprio" class="input_option">
+													<option <% nvram_match("qos_cake_dlprio","besteffort","selected"); %> value="besteffort">Best effort</option>
+													<option <% nvram_match("qos_cake_dlprio","diffserv3","selected"); %> value="diffserv3">3 tins (diffserv3)</option>
+													<option <% nvram_match("qos_cake_dlprio","diffserv4","selected"); %> value="diffserv4">4 tins (diffserv4)</option>
+												</select>
+												<label style="margin-left:15px;margin-right:5px;">ACK filter:</label>
+												<select name="qos_cake_ack" class="input_option">
+													<option <% nvram_match("qos_cake_ack","0","selected"); %> value="0">Off</option>
+													<option <% nvram_match("qos_cake_ack","1","selected"); %> value="1">On</option>
+													<option <% nvram_match("qos_cake_ack","2","selected"); %> value="2">Aggressive</option>
+												</select>
+											</td>
+										</tr>
+										<tr id="cake_game_tr" style="display:none">
+											<th>Cake game priority</th>
+											<td colspan="2">
+												<select name="qos_cake_game" class="input_option">
+													<option <% nvram_match("qos_cake_game","1","selected"); %> value="1">On</option>
+													<option <% nvram_match("qos_cake_game","0","selected"); %> value="0">Off</option>
+												</select>
+												<label style="margin-left:15px;margin-right:5px;">UDP ports:</label>
+												<input type="text" maxlength="128" class="input_25_table" name="qos_cake_gameports" value="<% nvram_get("qos_cake_gameports"); %>" autocorrect="off" autocapitalize="off">
+												<div style="color:#FFCC00;margin-top:4px;">Comma-separated ports or ranges (3074:3079), up to 15. Default covers Call of Duty and League of Legends.</div>
+											</td>
+										</tr>
+										<tr id="cake_dlhosts_tr" style="display:none">
+											<th>Cake download devices</th>
+											<td colspan="2">
+												<input type="text" maxlength="512" class="input_32_table" name="qos_cake_dlhosts" value="<% nvram_get("qos_cake_dlhosts"); %>" autocorrect="off" autocapitalize="off">
+												<div style="color:#FFCC00;margin-top:4px;">Space-separated LAN IPs, subnets or MAC addresses whose downloads Cake shapes. Leave empty to shape all downloads. Unlisted devices keep full hardware-accelerated speed. Needs a download bandwidth.</div>
 											</td>
 										</tr>
                     <tr id="bandwidth_setting_tr" style="display:none">

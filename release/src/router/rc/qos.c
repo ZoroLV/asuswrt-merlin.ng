@@ -2695,6 +2695,11 @@ int add_iQosRules(char *pcWANIF)
 	else if (IS_BW_QOS()) {
 		status = add_bandwidth_limiter_rules(pcWANIF);
 	}
+#ifdef HND_ROUTER
+	else if (IS_CAKE_QOS()) {
+		status = add_cake_rules();
+	}
+#endif
 /* OPPO */
 #if 0
 #ifdef RTCONFIG_ROUTERBOOST
@@ -2844,6 +2849,64 @@ void remove_codel_patch(void)
 
 #ifdef HND_ROUTER
 
+/* Cake packet/conn marks: bits 20-23 select a tin (fwmark), bit 24 flags
+ * connections whose downloads get redirected through the ingress Cake.
+ * Kept clear of QOS_MASK (0x3F) and the other marks the firmware uses.
+ */
+#define CAKE_TIN_MASK	0x00F00000
+#define CAKE_TIN_SHIFT	20
+#define CAKE_DL_FLAG	0x01000000
+
+static const char *cake_tin_mode(const char *nv, const char *def)
+{
+	static const char *modes[] = { "besteffort", "diffserv3", "diffserv4", "diffserv8", "precedence", NULL };
+	const char *val = nvram_safe_get(nv);
+	int i;
+
+	for (i = 0; modes[i]; i++)
+		if (!strcmp(val, modes[i]))
+			return modes[i];
+	return def;
+}
+
+/* fwmark value of the highest-priority tin: tin_order puts it last */
+static int cake_voice_mark(const char *mode)
+{
+	if (!strcmp(mode, "diffserv3"))
+		return 3;
+	if (!strcmp(mode, "diffserv4"))
+		return 4;
+	if (!strcmp(mode, "diffserv8") || !strcmp(mode, "precedence"))
+		return 8;
+	return 0;
+}
+
+/* Copy an nvram list into a shell-safe string: chars outside allowed become
+ * single space separators, or are dropped when split is 0.
+ */
+static void cake_safe_list(const char *nv, const char *allowed, int split, char *out, size_t len)
+{
+	const char *p = nvram_safe_get(nv);
+	size_t n = 0;
+
+	for (; *p && n + 1 < len; p++) {
+		if (strchr(allowed, *p))
+			out[n++] = *p;
+		else if (split && n && out[n - 1] != ' ')
+			out[n++] = ' ';
+	}
+	while (n && out[n - 1] == ' ')
+		n--;
+	out[n] = '\0';
+}
+
+int add_cake_rules(void)
+{
+	if (!f_exists(qosfn) || !f_exists("/etc/cake-qos.conf"))
+		return -1;
+	return eval((char *)qosfn, "rules");
+}
+
 int start_cake(void)
 {
 	unsigned int ibw, obw;
@@ -2854,6 +2917,9 @@ int start_cake(void)
 	char *mode;
 	char nvnat[16];
 	int nat;
+	const char *ulprio, *dlprio, *ackfilter;
+	char gameports[CKN_STR128 + 1];
+	char dlhosts[CKN_STR512 + 1];
 
 	if((f = fopen("/etc/cake-qos.conf", "w")) == NULL) return -2;
 
@@ -2891,30 +2957,66 @@ int start_cake(void)
 	snprintf(nvnat, sizeof (nvnat), "wan%d_nat_x", wan_primary_ifunit());
 	nat = nvram_get_int(nvnat);
 
+	ulprio = cake_tin_mode("qos_cake_ulprio", "diffserv3");
+	dlprio = cake_tin_mode("qos_cake_dlprio", "besteffort");
+
+	switch (nvram_get_int("qos_cake_ack")) {
+		case 1:
+			ackfilter = "ack-filter";
+			break;
+		case 2:
+			ackfilter = "ack-filter-aggressive";
+			break;
+		default:
+			ackfilter = "";
+	}
+
+	cake_safe_list("qos_cake_gameports", "0123456789:,", 0, gameports, sizeof(gameports));
+	cake_safe_list("qos_cake_dlhosts", "0123456789abcdefABCDEF:./", 1, dlhosts, sizeof(dlhosts));
+
 	/* Config parameters */
 	fprintf(f,
 		"#!/bin/sh\n\n"
 		"ULIF='%s'\n"
 		"DLIF='%s'\n"
 		"MIF='ifb4%s'\n"
+		"LANIF='%s'\n"
 		"ULBW='%s'\n"
 		"DLBW='%s'\n"
 		"OVERHEAD='%s'\n"
 		"FRAMING='%s'\n"
-		"ULPRIOQUEUE='diffserv3'\n"
-		"DLPRIOQUEUE='besteffort'\n"
-		"ULOPTIONS='%s dual-srchost'\n"
-		"DLOPTIONS='%s wash dual-dsthost ingress'\n",
+		"ULPRIOQUEUE='%s'\n"
+		"DLPRIOQUEUE='%s'\n"
+		"TINMASK='0x%x'\n"
+		"DLFLAG='0x%x'\n"
+		"ULOPTIONS=\"%s dual-srchost %s fwmark $TINMASK\"\n"
+		"DLOPTIONS=\"%s wash dual-dsthost ingress fwmark $TINMASK\"\n"
+		"# Game flows (UDP, iptables multiport list) go to the latency-sensitive tin\n"
+		"GAME='%d'\n"
+		"GAMEPORTS='%s'\n"
+		"GAMEMARK='0x%x'\n"
+		"# LAN IPv4/CIDR/IPv6/MAC list whose downloads are shaped; empty = all (when DLBW is set)\n"
+		"DLHOSTS='%s'\n",
 
 		wan_ifname,
 		wan_ifname,
 		wan_ifname,
+		nvram_safe_get("lan_ifname"),
 		obwstr,
 		ibwstr,
 		overheadstr,
 		mode,
+		ulprio,
+		dlprio,
+		CAKE_TIN_MASK,
+		CAKE_DL_FLAG,
 		(nat ? "nat" : ""),
-		(nat ? "nat" : "")
+		ackfilter,
+		(nat ? "nat" : ""),
+		nvram_get_int("qos_cake_game") ? 1 : 0,
+		gameports,
+		cake_voice_mark(ulprio) << CAKE_TIN_SHIFT,
+		dlhosts
 	);
 
 	append_custom_config("cake-qos.conf",f);
@@ -2928,22 +3030,72 @@ int start_cake(void)
 		"#!/bin/sh\n"
 		"source /etc/cake-qos.conf\n\n"
 
+		"cake_log() { logger -t cake-qos \"$*\"; }\n\n"
+
+		"# Conn marks feed Cake's fwmark tin selection and the download host filter.\n"
+		"# Safe to rerun: the firewall calls this after every rebuild of the mangle table.\n"
+		"cake_rules() {\n"
+		"\tfor IPT in iptables ip6tables; do\n"
+		"\t\twhich $IPT >/dev/null 2>&1 || continue\n"
+		"\t\t$IPT -t mangle -N CAKE_QOS 2>/dev/null\n"
+		"\t\t$IPT -t mangle -F CAKE_QOS\n"
+		"\t\t$IPT -t mangle -D FORWARD -j CAKE_QOS 2>/dev/null\n"
+		"\t\t$IPT -t mangle -I FORWARD -j CAKE_QOS\n"
+		"\t\t$IPT -t mangle -D POSTROUTING -o $ULIF -j CONNMARK --restore-mark --nfmask $TINMASK --ctmask $TINMASK 2>/dev/null\n"
+		"\t\t$IPT -t mangle -A POSTROUTING -o $ULIF -j CONNMARK --restore-mark --nfmask $TINMASK --ctmask $TINMASK\n"
+		"\t\tif [ \"$GAME\" = 1 ] && [ $((GAMEMARK)) -ne 0 ] && [ -n \"$GAMEPORTS\" ]; then\n"
+		"\t\t\t$IPT -t mangle -A CAKE_QOS -p udp -m multiport --ports \"$GAMEPORTS\" -j CONNMARK --set-xmark $GAMEMARK/$TINMASK ||\n"
+		"\t\t\t\tcake_log \"$IPT: bad game port list '$GAMEPORTS'\"\n"
+		"\t\tfi\n"
+		"\t\t[ -n \"$DLBW\" ] && [ -n \"$DLHOSTS\" ] || continue\n"
+		"\t\tfor H in $DLHOSTS; do\n"
+		"\t\t\tcase \"$H\" in\n"
+		"\t\t\t\t??:??:??:??:??:??) M=\"-m mac --mac-source $H\" ;;\n"
+		"\t\t\t\t*:*) [ $IPT = ip6tables ] || continue; M=\"-s $H\" ;;\n"
+		"\t\t\t\t*) [ $IPT = iptables ] || continue; M=\"-s $H\" ;;\n"
+		"\t\t\tesac\n"
+		"\t\t\t$IPT -t mangle -A CAKE_QOS -i $LANIF $M -j CONNMARK --set-xmark $DLFLAG/$DLFLAG ||\n"
+		"\t\t\t\tcake_log \"$IPT: bad download host '$H'\"\n"
+		"\t\tdone\n"
+		"\tdone\n"
+		"}\n\n"
+
+		"cake_rules_flush() {\n"
+		"\tfor IPT in iptables ip6tables; do\n"
+		"\t\twhich $IPT >/dev/null 2>&1 || continue\n"
+		"\t\t$IPT -t mangle -D FORWARD -j CAKE_QOS 2>/dev/null\n"
+		"\t\t$IPT -t mangle -D POSTROUTING -o $ULIF -j CONNMARK --restore-mark --nfmask $TINMASK --ctmask $TINMASK 2>/dev/null\n"
+		"\t\t$IPT -t mangle -F CAKE_QOS 2>/dev/null\n"
+		"\t\t$IPT -t mangle -X CAKE_QOS 2>/dev/null\n"
+		"\tdone\n"
+		"}\n\n"
+
 		"case \"$1\" in\n"
 		"start)\n"
-		"\tmodprobe sch_cake 2>/dev/null\n\n"
+		"\tmodprobe sch_cake 2>/dev/null\n"
+		"\tcake_rules\n\n"
 
 		"# Upload\n"
-		"\tERR=$(tc qdisc add dev $ULIF root cake $ULPRIOQUEUE $ULBW $OVERHEAD $FRAMING $ULOPTIONS 2>&1) || logger -t cake-qos \"upload qdisc on $ULIF failed: $ERR\"\n\n"
+		"\tERR=$(tc qdisc add dev $ULIF root cake $ULPRIOQUEUE $ULBW $OVERHEAD $FRAMING $ULOPTIONS 2>&1) || cake_log \"upload qdisc on $ULIF failed: $ERR\"\n\n"
 
-		"# Download (skipped when unlimited: redirecting through an unshaped ifb only costs CPU)\n"
+		"# Download (skipped when unlimited: redirecting through an unshaped ifb only costs CPU).\n"
+		"# The connmark action runs first so the fwmark tins and the host filter see conn marks.\n"
 		"\tif [ -n \"$DLBW\" ]; then\n"
 		"\t\tip link add name $MIF type ifb 2>/dev/null\n"
 		"\t\ttc qdisc add dev $DLIF handle ffff: ingress 2>/dev/null\n"
-		"\t\tERR=$(tc qdisc add dev $MIF root cake $DLPRIOQUEUE $DLBW $OVERHEAD $FRAMING $DLOPTIONS 2>&1) || logger -t cake-qos \"download qdisc on $MIF failed: $ERR\"\n"
+		"\t\tERR=$(tc qdisc add dev $MIF root cake $DLPRIOQUEUE $DLBW $OVERHEAD $FRAMING $DLOPTIONS 2>&1) || cake_log \"download qdisc on $MIF failed: $ERR\"\n"
 		"\t\tip link set $MIF up 2>/dev/null\n"
-		"\t\ttc filter add dev $DLIF parent ffff: prio 10 matchall action mirred egress redirect dev $MIF 2>/dev/null\n"
-		"\tfi\n\n"
-
+		"\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 1 u32 match u32 0 0 flowid 1:1 action connmark continue 2>&1) || cake_log \"ingress connmark failed: $ERR\"\n"
+		"\t\tif [ -n \"$DLHOSTS\" ]; then\n"
+		"\t\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 2 u32 match mark $DLFLAG $DLFLAG flowid 1:1 action mirred egress redirect dev $MIF 2>&1) || cake_log \"ingress host redirect failed: $ERR\"\n"
+		"\t\telse\n"
+		"\t\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 2 matchall action mirred egress redirect dev $MIF 2>&1) || cake_log \"ingress redirect failed: $ERR\"\n"
+		"\t\tfi\n"
+		"\tfi\n"
+		"\tcake_log \"started: up [$ULBW] $ULPRIOQUEUE, down [${DLBW:-unshaped}] ${DLHOSTS:+hosts: $DLHOSTS}\"\n"
+		"\t;;\n"
+		"rules)\n"
+		"\tcake_rules\n"
 		"\t;;\n"
 		"stop)\n"
 		"\ttc qdisc del dev $ULIF root 2>/dev/null\n"
@@ -2951,8 +3103,11 @@ int start_cake(void)
 		"\ttc qdisc del dev $MIF root 2>/dev/null\n"
 		"\tip link set $MIF down 2>/dev/null\n"
 		"\tip link del dev $MIF 2>/dev/null\n"
+		"\tcake_rules_flush\n"
 		"\t;;\n"
 		"*)\n"
+		"\ttc -s qdisc show dev $ULIF\n"
+		"\t[ -n \"$DLBW\" ] && tc -s qdisc show dev $MIF\n"
 		"esac\n");
 
 	fclose(f);
@@ -2961,7 +3116,7 @@ int start_cake(void)
 	run_custom_script("qos-start", 120, "init", NULL);
 	eval((char *)qosfn, "start");
 
-	/* fc stays on for upload-only Cake: drop flows learned before the qdisc existed */
+	/* fc stays on with Cake: drop flows learned before the qdiscs existed */
 	if (nvram_match("fc_disable", "0"))
 		eval("fc", "flush");
 

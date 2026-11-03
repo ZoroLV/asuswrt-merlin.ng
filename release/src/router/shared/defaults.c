@@ -4483,6 +4483,12 @@ struct nvram_tuple router_defaults[] = {
 	{ "qos_overhead", "0", CKN_STR4, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Overhead, in bytes
 	{ "qos_atm", "0", CKN_STR1, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // 2 = PTM (Cake only), 1 = ATM, 0 = Ethernet
 	{ "qos_mpu", "0", CKN_STR4, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // MPU overhead for Cake, in bytes
+	{ "qos_cake_ulprio", "diffserv3", CKN_STR16, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Cake upload tins: besteffort/diffserv3/diffserv4/diffserv8/precedence
+	{ "qos_cake_dlprio", "besteffort", CKN_STR16, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Cake download tins, same choices
+	{ "qos_cake_ack", "1", CKN_STR1, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Cake upload ACK filter: 0 = off, 1 = on, 2 = aggressive
+	{ "qos_cake_game", "1", CKN_STR1, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Put game flows in the Cake latency-sensitive tin
+	{ "qos_cake_gameports", "3074:3079,5000:5500", CKN_STR128, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // UDP ports (iptables multiport syntax) treated as game traffic
+	{ "qos_cake_dlhosts", "", CKN_STR512, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // LAN IPv4/CIDR or MACs whose downloads Cake shapes; empty = all
 #endif
 
 #ifdef RTCONFIG_DNSFILTER
