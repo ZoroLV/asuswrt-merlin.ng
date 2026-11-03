@@ -1011,6 +1011,58 @@ static struct tcphdr *cake_get_tcphdr(const struct sk_buff *skb,
 				  min(__tcp_hdrlen(tcph), bufsize), buf);
 }
 
+#if defined(CONFIG_BCM_KF_BLOG) && defined(CONFIG_BLOG)
+/* Let pure TCP ACKs through to the Broadcom flow cache instead of
+ * blog_skip()ing them. A saturating download sends tens of thousands of
+ * ACKs a second; pushed through CAKE in the bcmsw_rx thread they starve
+ * CPU0. The flow cache keeps them apart from data (TCP ACK mflows), so
+ * the data of a flow stays shaped. 0 restores the old behaviour; run
+ * "fc flush" after changing it so already learned flows are dropped.
+ */
+static bool accel_acks = true;
+module_param(accel_acks, bool, 0644);
+MODULE_PARM_DESC(accel_acks, "Leave pure TCP ACKs to the flow cache");
+
+static bool cake_is_pure_ack(const struct sk_buff *skb)
+{
+	unsigned int offset = skb_network_offset(skb);
+	const struct ipv6hdr *ipv6h;
+	const struct tcphdr *tcph;
+	struct ipv6hdr _ipv6h;
+	struct tcphdr _tcph;
+	unsigned int hlen, iplen;
+
+	ipv6h = skb_header_pointer(skb, offset, sizeof(_ipv6h), &_ipv6h);
+	if (!ipv6h)
+		return false;
+
+	if (ipv6h->version == 4) {
+		const struct iphdr *iph = (const struct iphdr *)ipv6h;
+
+		if (iph->protocol != IPPROTO_TCP ||
+		    iph->frag_off & htons(IP_MF | IP_OFFSET))
+			return false;
+		hlen = iph->ihl * 4;
+		iplen = ntohs(iph->tot_len);
+	} else if (ipv6h->version == 6) {
+		if (ipv6h->nexthdr != IPPROTO_TCP)
+			return false;
+		hlen = sizeof(struct ipv6hdr);
+		iplen = hlen + ntohs(ipv6h->payload_len);
+	} else {
+		return false;
+	}
+
+	tcph = skb_header_pointer(skb, offset + hlen, sizeof(_tcph), &_tcph);
+	if (!tcph || tcph->doff < 5)
+		return false;
+
+	return (tcp_flag_word(tcph) & (TCP_FLAG_SYN | TCP_FLAG_FIN |
+				       TCP_FLAG_RST | TCP_FLAG_ACK)) ==
+		TCP_FLAG_ACK && iplen == hlen + __tcp_hdrlen(tcph);
+}
+#endif
+
 static const void *cake_get_tcpopt(const struct tcphdr *tcph,
 				   int code, int *oplen)
 {
@@ -1766,7 +1818,8 @@ static s32 cake_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	 * Done before GSO splitting so every segment of the flow is covered.
 	 * Reuses the htb skip reason: blog.h is shared with prebuilt modules.
 	 */
-	if (!BROADSTREAM_IQOS_ENABLE())
+	if (!BROADSTREAM_IQOS_ENABLE() &&
+	    !(accel_acks && cake_is_pure_ack(skb)))
 		blog_skip(skb, blog_skip_reason_sch_htb);
 #endif
 
