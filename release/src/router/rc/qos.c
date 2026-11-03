@@ -2930,15 +2930,19 @@ int start_cake(void)
 
 		"case \"$1\" in\n"
 		"start)\n"
-		"# Upload\n"
-		"\ttc qdisc add dev $ULIF root cake $ULPRIOQUEUE $ULBW $OVERHEAD $FRAMING $ULOPTIONS 2>/dev/null\n\n"
+		"\tmodprobe sch_cake 2>/dev/null\n\n"
 
-		"# Download\n"
-		"\tip link add name $MIF type ifb 2>/dev/null\n"
-		"\ttc qdisc add dev $DLIF handle ffff: ingress 2>/dev/null\n"
-		"\ttc qdisc add dev $MIF root cake $DLPRIOQUEUE $DLBW $OVERHEAD $FRAMING $DLOPTIONS 2>/dev/null\n"
-		"\tip link set $MIF up 2>/dev/null\n"
-		"\ttc filter add dev $DLIF parent ffff: prio 10 matchall action mirred egress redirect dev $MIF 2>/dev/null\n\n"
+		"# Upload\n"
+		"\tERR=$(tc qdisc add dev $ULIF root cake $ULPRIOQUEUE $ULBW $OVERHEAD $FRAMING $ULOPTIONS 2>&1) || logger -t cake-qos \"upload qdisc on $ULIF failed: $ERR\"\n\n"
+
+		"# Download (skipped when unlimited: redirecting through an unshaped ifb only costs CPU)\n"
+		"\tif [ -n \"$DLBW\" ]; then\n"
+		"\t\tip link add name $MIF type ifb 2>/dev/null\n"
+		"\t\ttc qdisc add dev $DLIF handle ffff: ingress 2>/dev/null\n"
+		"\t\tERR=$(tc qdisc add dev $MIF root cake $DLPRIOQUEUE $DLBW $OVERHEAD $FRAMING $DLOPTIONS 2>&1) || logger -t cake-qos \"download qdisc on $MIF failed: $ERR\"\n"
+		"\t\tip link set $MIF up 2>/dev/null\n"
+		"\t\ttc filter add dev $DLIF parent ffff: prio 10 matchall action mirred egress redirect dev $MIF 2>/dev/null\n"
+		"\tfi\n\n"
 
 		"\t;;\n"
 		"stop)\n"
@@ -2956,6 +2960,10 @@ int start_cake(void)
 	chmod(qosfn, 0755);
 	run_custom_script("qos-start", 120, "init", NULL);
 	eval((char *)qosfn, "start");
+
+	/* fc stays on for upload-only Cake: drop flows learned before the qdisc existed */
+	if (nvram_match("fc_disable", "0"))
+		eval("fc", "flush");
 
 	return 0;
 }

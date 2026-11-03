@@ -1656,6 +1656,16 @@ static s32 cake_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct cake_flow *flow;
 	u32 idx;
 
+#if defined(CONFIG_BCM_KF_BLOG) && defined(CONFIG_BLOG)
+	/* Keep flows shaped by CAKE out of the Broadcom flow cache, as
+	 * sch_htb does, so fc can stay enabled for traffic CAKE never sees.
+	 * Done before GSO splitting so every segment of the flow is covered.
+	 * Reuses the htb skip reason: blog.h is shared with prebuilt modules.
+	 */
+	if (!BROADSTREAM_IQOS_ENABLE())
+		blog_skip(skb, blog_skip_reason_sch_htb);
+#endif
+
 	/* choose flow to insert into */
 	idx = cake_classify(sch, &b, skb, q->flow_mode, &ret);
 	if (idx == 0) {

@@ -12179,12 +12179,15 @@ void fc_fini()
 void hnd_nat_ac_init(int bootup)
 {
 	int routing_mode = is_routing_enabled();
+	// Upload-only Cake: sch_cake blog_skips the flows it shapes, so fc can stay on
+	int cake_ul_only = IS_CAKE_QOS() && nvram_get_int("qos_ibw") == 0;
+	int need_sw_path = routing_mode && IS_NON_AQOS() && !IS_RB_QOS() && !cake_ul_only;
 
 	// A.QOS : not to disable fc
-	nvram_set_int("fc_disable", nvram_get_int("fc_disable_force") || (routing_mode && IS_NON_AQOS() && !IS_RB_QOS()) ? 1 : 0);
+	nvram_set_int("fc_disable", nvram_get_int("fc_disable_force") || need_sw_path ? 1 : 0);
 
 	// A.QOS : no need to disable runner
-	nvram_set_int("runner_disable", nvram_get_int("runner_disable_force") || (routing_mode && IS_NON_AQOS() && !IS_RB_QOS()) ? 1 : 0);
+	nvram_set_int("runner_disable", nvram_get_int("runner_disable_force") || need_sw_path ? 1 : 0);
 
 #ifdef RTCONFIG_HND_ROUTER_BE_4916
 	/*
