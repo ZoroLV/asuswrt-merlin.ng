@@ -3055,7 +3055,7 @@ int start_cake(void)
 		"\t\t[ -n \"$DLBW\" ] && [ -n \"$DLHOSTS\" ] || continue\n"
 		"\t\tfor H in $DLHOSTS; do\n"
 		"\t\t\tcase \"$H\" in\n"
-		"\t\t\t\t??:??:??:??:??:??) M=\"-m mac --mac-source $H\" ;;\n"
+		"\t\t\t\t?\?:?\?:?\?:?\?:?\?:?\?) M=\"-m mac --mac-source $H\" ;;\n"
 		"\t\t\t\t*:*) [ $IPT = ip6tables ] || continue; M=\"-s $H\" ;;\n"
 		"\t\t\t\t*) [ $IPT = iptables ] || continue; M=\"-s $H\" ;;\n"
 		"\t\t\tesac\n"
