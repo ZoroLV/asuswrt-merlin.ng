@@ -4489,6 +4489,7 @@ struct nvram_tuple router_defaults[] = {
 	{ "qos_cake_game", "1", CKN_STR1, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Put game flows in the Cake latency-sensitive tin
 	{ "qos_cake_gameports", "3074:3079,5000:5500", CKN_STR128, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // UDP ports (iptables multiport syntax) treated as game traffic
 	{ "qos_cake_dlhosts", "", CKN_STR512, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // LAN IPv4/CIDR or MACs whose downloads Cake shapes; empty = all
+	{ "qos_cake_rps", "6", CKN_STR8, CKN_TYPE_DEFAULT, CKN_ACC_LEVEL_DEFAULT, CKN_ENC_DEFAULT, 0 }, // Hex CPU mask for RPS on WAN/ifb receive while Cake runs; empty = off
 #endif
 
 #ifdef RTCONFIG_DNSFILTER

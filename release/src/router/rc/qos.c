@@ -2920,6 +2920,7 @@ int start_cake(void)
 	const char *ulprio, *dlprio, *ackfilter;
 	char gameports[CKN_STR128 + 1];
 	char dlhosts[CKN_STR512 + 1];
+	char rpscpus[CKN_STR8 + 1];
 
 	if((f = fopen("/etc/cake-qos.conf", "w")) == NULL) return -2;
 
@@ -2973,6 +2974,7 @@ int start_cake(void)
 
 	cake_safe_list("qos_cake_gameports", "0123456789:,", 0, gameports, sizeof(gameports));
 	cake_safe_list("qos_cake_dlhosts", "0123456789abcdefABCDEF:./", 1, dlhosts, sizeof(dlhosts));
+	cake_safe_list("qos_cake_rps", "0123456789abcdefABCDEF", 0, rpscpus, sizeof(rpscpus));
 
 	/* Config parameters */
 	fprintf(f,
@@ -2996,7 +2998,9 @@ int start_cake(void)
 		"GAMEPORTS='%s'\n"
 		"GAMEMARK='0x%x'\n"
 		"# LAN IPv4/CIDR/IPv6/MAC list whose downloads are shaped; empty = all (when DLBW is set)\n"
-		"DLHOSTS='%s'\n",
+		"DLHOSTS='%s'\n"
+		"# RPS CPU mask (hex) for WAN and ifb receive; the driver thread is pinned to CPU0\n"
+		"RPSCPUS='%s'\n",
 
 		wan_ifname,
 		wan_ifname,
@@ -3016,7 +3020,8 @@ int start_cake(void)
 		nvram_get_int("qos_cake_game") ? 1 : 0,
 		gameports,
 		cake_voice_mark(ulprio) << CAKE_TIN_SHIFT,
-		dlhosts
+		dlhosts,
+		rpscpus
 	);
 
 	append_custom_config("cake-qos.conf",f);
@@ -3060,6 +3065,13 @@ int start_cake(void)
 		"\tdone\n"
 		"}\n\n"
 
+		"# Spread receive processing of CPU-path traffic over the other cores\n"
+		"cake_rps() {\n"
+		"\tfor Q in /sys/class/net/$1/queues/rx-*/rps_cpus; do\n"
+		"\t\t[ -f \"$Q\" ] && echo \"$2\" > \"$Q\" 2>/dev/null\n"
+		"\tdone\n"
+		"}\n\n"
+
 		"cake_rules_flush() {\n"
 		"\tfor IPT in iptables ip6tables; do\n"
 		"\t\twhich $IPT >/dev/null 2>&1 || continue\n"
@@ -3073,7 +3085,8 @@ int start_cake(void)
 		"case \"$1\" in\n"
 		"start)\n"
 		"\tmodprobe sch_cake 2>/dev/null\n"
-		"\tcake_rules\n\n"
+		"\tcake_rules\n"
+		"\t[ -n \"$RPSCPUS\" ] && cake_rps $DLIF $RPSCPUS\n\n"
 
 		"# Upload\n"
 		"\tERR=$(tc qdisc add dev $ULIF root cake $ULPRIOQUEUE $ULBW $OVERHEAD $FRAMING $ULOPTIONS 2>&1) || cake_log \"upload qdisc on $ULIF failed: $ERR\"\n\n"
@@ -3085,6 +3098,7 @@ int start_cake(void)
 		"\t\ttc qdisc add dev $DLIF handle ffff: ingress 2>/dev/null\n"
 		"\t\tERR=$(tc qdisc add dev $MIF root cake $DLPRIOQUEUE $DLBW $OVERHEAD $FRAMING $DLOPTIONS 2>&1) || cake_log \"download qdisc on $MIF failed: $ERR\"\n"
 		"\t\tip link set $MIF up 2>/dev/null\n"
+		"\t\t[ -n \"$RPSCPUS\" ] && cake_rps $MIF $RPSCPUS\n"
 		"\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 1 u32 match u32 0 0 flowid 1:1 action connmark continue 2>&1) || cake_log \"ingress connmark failed: $ERR\"\n"
 		"\t\tif [ -n \"$DLHOSTS\" ]; then\n"
 		"\t\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 2 u32 match mark $DLFLAG $DLFLAG flowid 1:1 action mirred egress redirect dev $MIF 2>&1) || cake_log \"ingress host redirect failed: $ERR\"\n"
@@ -3092,7 +3106,7 @@ int start_cake(void)
 		"\t\t\tERR=$(tc filter add dev $DLIF parent ffff: protocol all prio 2 matchall action mirred egress redirect dev $MIF 2>&1) || cake_log \"ingress redirect failed: $ERR\"\n"
 		"\t\tfi\n"
 		"\tfi\n"
-		"\tcake_log \"started: up [$ULBW] $ULPRIOQUEUE, down [${DLBW:-unshaped}] ${DLHOSTS:+hosts: $DLHOSTS}\"\n"
+		"\tcake_log \"started: up [$ULBW] $ULPRIOQUEUE, down [${DLBW:-unshaped}] ${DLHOSTS:+hosts: $DLHOSTS} rps [${RPSCPUS:-off}]\"\n"
 		"\t;;\n"
 		"rules)\n"
 		"\tcake_rules\n"
@@ -3103,6 +3117,7 @@ int start_cake(void)
 		"\ttc qdisc del dev $MIF root 2>/dev/null\n"
 		"\tip link set $MIF down 2>/dev/null\n"
 		"\tip link del dev $MIF 2>/dev/null\n"
+		"\t[ -n \"$RPSCPUS\" ] && cake_rps $DLIF 0\n"
 		"\tcake_rules_flush\n"
 		"\t;;\n"
 		"*)\n"
